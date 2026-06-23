@@ -13,6 +13,18 @@ app.use(cors());
 app.use(express.json());
 
 
+// SERVER 
+const PORT = process.env.PORT || 5000;
+
+app.get('/', (req, res) => {
+    res.send('Wellcome to ARTHUB server');
+});
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
+
 // DB CONECTION
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri);
@@ -31,7 +43,7 @@ async function connectDB() {
 connectDB();
 
 
-const Users = () => db.collection("users");
+const Users = () => db.collection("user");
 const Artworks = () => db.collection("artworks");
 const Purchases = () => db.collection("purchases");
 const Comment = () => db.collection("comments");
@@ -141,10 +153,10 @@ app.post("/api/auth/sign-in", async (req, res) => {
 // GET ALL USERS
 app.get("/api/users", async (req, res) => {
     try {
-        const users = await Users().find({}).project({ password: 0 }).toArray();
-        res.json(users);
+        const user = await Users().find({}).project({ password: 0 }).toArray();
+        res.json(user);
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        res.status(500).json({ user_error_message: error.message });
     }
 });
 
@@ -484,20 +496,64 @@ app.get("/api/purchase", async (req, res) => {
 });
 
 
+//SUBSCRIPTION
 
-
-
-
-
-
-
-// SERVER 
-const PORT = process.env.PORT || 5000;
-
-app.get('/', (req, res) => {
+app.get("/api/users/subscription", async (req, res) => {
     res.send('Wellcome to ARTHUB server');
+})
+
+app.patch("/api/users/subscription", async (req, res) => {
+    try {
+        const { email, tier } = req.body;
+
+        if (!email || !tier) {
+            return res.status(400).json({
+                success: false,
+                message: "Email and tier are required",
+            });
+        }
+
+        let maxPurchases = 3;
+
+        if (tier === "pro") maxPurchases = 9;
+        if (tier === "premium") maxPurchases = -1;
+
+        const result = await Users().findOneAndUpdate(
+            { email },
+            {
+                $set: {
+                    subscriptionTier: tier,
+                    maxPurchases,
+                    subscriptionStatus: "active",
+                    subscriptionUpdatedAt: new Date(),
+                },
+            },
+            {
+                returnDocument: "after",
+                upsert: false,
+            }
+        );
+
+        if (!result || !result.value) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found",
+            });
+        }
+
+        return res.json({
+            success: true,
+            message: `Subscription upgraded to ${tier}`,
+            user: result.value,
+        });
+    } catch (error) {
+        console.log(error);
+
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+
