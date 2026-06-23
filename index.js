@@ -34,6 +34,7 @@ connectDB();
 const Users = () => db.collection("users");
 const Artworks = () => db.collection("artworks");
 const Purchases = () => db.collection("purchases");
+const Comment = () => db.collection("comments");
 
 
 // JWT
@@ -289,8 +290,6 @@ app.post("/api/artworks", async (req, res) => {
 
         const artwork = {
             ...req.body,
-
-            // price number হিসেবে save হবে
             price: Number(req.body.price),
 
             createdAt: new Date()
@@ -311,11 +310,11 @@ app.post("/api/artworks", async (req, res) => {
 });
 
 // UPDATE ARTWORK
-app.patch("/api/artworks/:id", async (req, res) => {
+app.patch("/api/artworks/edit/:id", async (req, res) => {
     try {
         const id = req.params.id;
-
         const updateData = { ...req.body };
+
         if (updateData.price) {
             updateData.price = Number(updateData.price);
         }
@@ -326,7 +325,9 @@ app.patch("/api/artworks/:id", async (req, res) => {
             { returnDocument: "after" }
         );
 
-        if (!result?.value) {
+        const updatedDoc = result?.value || result;
+
+        if (!updatedDoc) {
             return res.status(404).json({
                 success: false,
                 message: "Artwork not found",
@@ -335,11 +336,11 @@ app.patch("/api/artworks/:id", async (req, res) => {
 
         return res.json({
             success: true,
-            data: result.value,
+            data: updatedDoc, // ফ্রন্টএন্ডে এই ডেটা ব্যবহার করতে হবে
         });
 
     } catch (error) {
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: error.message,
         });
@@ -374,6 +375,89 @@ app.delete("/api/artworks/:id", async (req, res) => {
     }
 });
 
+
+
+
+//Comment
+
+app.post("/comments", async (req, res) => {
+    try {
+        const comment = {
+            artId: new ObjectId(req.body.artId),
+            userName: req.body.userName,
+            userEmail: req.body.userEmail,
+            userImage: req.body.userImage,
+            text: req.body.text,
+            createdAt: new Date(),
+        };
+
+        const result = await Comment().insertOne(comment);
+
+        res.status(201).send(result);
+    } catch (error) {
+        res.status(500).send({
+            message: error.message,
+        });
+    }
+});
+
+app.get("/comments/:artId", async (req, res) => {
+    try {
+        const result = await Comment()
+            .find({
+                artId: new ObjectId(req.params.artId),
+            })
+            .sort({
+                createdAt: -1,
+            })
+            .toArray();
+
+        res.send(result);
+    } catch (error) {
+        res.status(500).send({
+            message: error.message,
+        });
+    }
+});
+
+app.put("/comments/:id", async (req, res) => {
+    try {
+        const result = await Comment().updateOne(
+            {
+                _id: new ObjectId(req.params.id),
+            },
+            {
+                $set: {
+                    text: req.body.text,
+                },
+            }
+        );
+
+        res.send(result);
+    } catch (error) {
+        res.status(500).send({
+            message: error.message,
+        });
+    }
+});
+
+app.delete("/comments/:id", async (req, res) => {
+    try {
+        const result = await Comment().deleteOne({
+            _id: new ObjectId(req.params.id),
+        });
+
+        res.send(result);
+    } catch (error) {
+        res.status(500).send({
+            message: error.message,
+        });
+    }
+});
+
+
+
+
 // PURCHASE
 // CREATE
 app.post("/api/purchase", async (req, res) => {
@@ -398,6 +482,11 @@ app.get("/api/purchase", async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+
+
+
+
+
 
 
 
