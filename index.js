@@ -474,25 +474,82 @@ app.delete("/comments/:id", async (req, res) => {
 // CREATE
 app.post("/api/purchase", async (req, res) => {
     try {
-        const newPurchase = {
-            ...req.body,
-            createdAt: new Date()
+        const purchase = {
+            artworkId: req.body.artworkId,
+            title: req.body.title,
+            image: req.body.image,
+            price: Number(req.body.price),
+            artistName: req.body.artistName,
+            artistEmail: req.body.artistEmail,
+            buyerName: req.body.buyerName,
+            buyerEmail: req.body.buyerEmail,
+            buyerImage: req.body.buyerImage,
+            status: "completed",
+            createdAt: new Date(),
         };
-        const result = await Purchases().insertOne(newPurchase);
-        res.status(201).json({ _id: result.insertedId, ...newPurchase });
+        const result = await Purchases().insertOne(purchase);
+        res.status(201).json({
+            success: true,
+            insertedId: result.insertedId,
+            purchase,
+        });
+
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 });
 
 // GET ALL PURCHASES
 app.get("/api/purchase", async (req, res) => {
-    try {
-        const data = await Purchases().find({}).toArray();
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+  try {
+    const { email } = req.query;
+
+    const query = {};
+
+    if (email) {
+      query.buyerEmail = email;
     }
+
+    const result = await Purchases()
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json(result);
+
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
+app.get("/api/sales", async (req, res) => {
+  try {
+    const artistEmail = req.query.artistEmail;
+
+    if (!artistEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "artistEmail is required",
+      });
+    }
+
+    const sales = await Purchases()
+      .find({ artistEmail })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json(sales);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
 });
 
 
