@@ -24,18 +24,16 @@ app.listen(PORT, () => {
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri);
 
-let db;
+let db = null;
 
-async function connectDB() {
-    try {
+async function getDB() {
+    if (!db) {
         await client.connect();
         db = client.db("ArtHub");
-        console.log("Connected successfully to MongoDB");
-    } catch (err) {
-        console.error("Database connection error:", err);
+        console.log("MongoDB Connected");
     }
+    return db;
 }
-connectDB();
 
 
 const Users = () => db.collection("user");
@@ -189,13 +187,17 @@ app.get("/api/artworks", async (req, res) => {
 // FOR HOME PAGE TRENDING
 app.get("/api/artworks/trending", async (req, res) => {
     try {
-        const result = await Artworks()
+        const db = await getDB();
+
+        const result = await db
+            .collection("artworks")
             .find({})
             .sort({ createdAt: -1 })
             .limit(6)
             .toArray();
 
         res.json(result);
+
     } catch (error) {
         res.status(500).json({
             message: error.message
