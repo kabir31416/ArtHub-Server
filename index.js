@@ -590,6 +590,24 @@ app.get("/api/admin/users", async (req, res) => {
   res.send(users);
 });
 
+app.get("/api/admin/transactions", async (req, res) => {
+  const purchases = await Purchases()
+    .find()
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  const transactions = purchases.map((item) => ({
+    id: item._id,
+    type: "purchase",
+    email: item.buyerEmail,
+    artistEmail: item.artistEmail,
+    amount: item.price,
+    date: item.createdAt,
+  }));
+
+  res.send(transactions);
+});
+
 
 //SUBSCRIPTION
 app.get("/api/users/subscription", async (req, res) => {
@@ -667,3 +685,4 @@ app.patch("/api/admin/users/:id/role", async (req, res) => {
 
   res.send(result);
 });
+
