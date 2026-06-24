@@ -650,4 +650,20 @@ app.patch("/api/users/subscription", async (req, res) => {
     }
 });
 
+app.patch("/api/admin/users/:id/role", async (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body;
 
+  const result = await Users().updateOne(
+    {
+      _id: new ObjectId(id),
+    },
+    {
+      $set: {
+        role,
+      },
+    }
+  );
+
+  res.send(result);
+});
