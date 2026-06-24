@@ -549,6 +549,38 @@ app.get("/api/sales", async (req, res) => {
 });
 
 //---------------------- Admin page -----------------------------
+app.get("/api/admin/analytics", async (req, res) => {
+  try {
+    const totalUsers = await Users().countDocuments({
+      role: "user",
+    });
+
+    const totalArtists = await Users().countDocuments({
+      role: "artist",
+    });
+
+    const sales = await Purchases().find().toArray();
+
+    const totalRevenue = sales.reduce(
+      (sum, item) => sum + Number(item.price || 0),
+      0
+    );
+
+    const totalArtworksSold = sales.length;
+
+    res.send({
+      totalUsers,
+      totalArtists,
+      totalRevenue,
+      totalArtworksSold,
+    });
+  } catch (err) {
+    res.status(500).send({
+      message: err.message,
+    });
+  }
+});
+
 app.get("/api/admin/sales-chart", async (req, res) => {
   try {
     const data = await Purchases()
