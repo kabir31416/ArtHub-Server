@@ -4,22 +4,17 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { MongoClient, ObjectId } from "mongodb";
 import dotenv from 'dotenv'
-
 dotenv.config();
-
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
 
 // SERVER 
 const PORT = process.env.PORT || 5000;
-
 app.get('/', (req, res) => {
     res.send('Wellcome to ARTHUB server');
 });
-
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
@@ -527,6 +522,7 @@ app.get("/api/purchase", async (req, res) => {
   }
 });
 
+//GET ARTIST SELS
 app.get("/api/sales", async (req, res) => {
   try {
     const artistEmail = req.query.artistEmail;
@@ -552,9 +548,41 @@ app.get("/api/sales", async (req, res) => {
   }
 });
 
+//---------------------- Admin page -----------------------------
+app.get("/api/admin/sales-chart", async (req, res) => {
+  try {
+    const data = await Purchases()
+      .aggregate([
+        {
+          $group: {
+            _id: {
+              month: {
+                $month: "$createdAt",
+              },
+            },
+            revenue: {
+              $sum: "$price",
+            },
+          },
+        },
+        {
+          $sort: {
+            "_id.month": 1,
+          },
+        },
+      ])
+      .toArray();
+
+    res.send(data);
+  } catch (err) {
+    res.status(500).send({
+      message: err.message,
+    });
+  }
+});
+
 
 //SUBSCRIPTION
-
 app.get("/api/users/subscription", async (req, res) => {
     res.send('Wellcome to ARTHUB server');
 })
