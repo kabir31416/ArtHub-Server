@@ -581,6 +581,15 @@ app.get("/api/admin/sales-chart", async (req, res) => {
   }
 });
 
+app.get("/api/admin/users", async (req, res) => {
+  const users = await Users()
+    .find()
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  res.send(users);
+});
+
 
 //SUBSCRIPTION
 app.get("/api/users/subscription", async (req, res) => {
