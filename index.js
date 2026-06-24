@@ -42,6 +42,7 @@ const Users = () => db.collection("user");
 const Artworks = () => db.collection("artworks");
 const Purchases = () => db.collection("purchases");
 const Comment = () => db.collection("comments");
+const Transactions = () => db.collection("transactions");
 
 
 // JWT
@@ -56,7 +57,6 @@ export const generateJWT = (user) => {
         { expiresIn: "7d" }
     );
 };
-
 
 export const verifyToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -196,58 +196,94 @@ app.patch("/api/user/update", async (req, res) => {
 // ART WORK API
 // GET ALL ARTWORKS + SEARCH + FILTER + SORT + ARTIST EMAIL
 app.get("/api/artworks", async (req, res) => {
-    try {
-        const {
-            email,
-            category,
-            search,
-            sort
-        } = req.query;
+  try {
+    const {
+      email,
+      category,
+      search,
+      sort,
+      minPrice,
+      maxPrice,
+      page = 1,
+      limit = 8,
+    } = req.query;
 
-        let query = {};
+    let query = {};
 
-        // Artist Email Filter
-        if (email) {
-            query.artistEmail = email;
-        }
-
-        // Category Filter
-        if (category) {
-            query.category = category;
-        }
-
-        // Search By Title
-        if (search) {
-            query.title = {
-                $regex: search,
-                $options: "i"
-            };
-        }
-
-        let cursor = Artworks().find(query);
-
-        // Price Sort
-        if (sort === "low") {
-            cursor = cursor.sort({
-                price: 1
-            });
-        }
-
-        if (sort === "high") {
-            cursor = cursor.sort({
-                price: -1
-            });
-        }
-
-        const result = await cursor.toArray();
-
-        res.status(200).json(result);
-
-    } catch (error) {
-        res.status(500).json({
-            message: error.message
-        });
+    // Artist Email
+    if (email) {
+      query.artistEmail = email;
     }
+
+    // Category
+    if (category) {
+      query.category = category;
+    }
+
+    // Search Title OR Artist Name
+    if (search) {
+      query.$or = [
+        {
+          title: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          artistName: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    // Price Range
+    if (minPrice || maxPrice) {
+      query.price = {};
+
+      if (minPrice) {
+        query.price.$gte = Number(minPrice);
+      }
+
+      if (maxPrice) {
+        query.price.$lte = Number(maxPrice);
+      }
+    }
+
+    let cursor = Artworks().find(query);
+
+   
+    if (sort === "low") {
+      cursor = cursor.sort({ price: 1 });
+    }
+
+    if (sort === "high") {
+      cursor = cursor.sort({ price: -1 });
+    }
+
+    if (sort === "newest") {
+      cursor = cursor.sort({ createdAt: -1 });
+    }
+
+    const total = await Artworks().countDocuments(query);
+
+    const artworks = await cursor
+      .skip((page - 1) * Number(limit))
+      .limit(Number(limit))
+      .toArray();
+
+    res.json({
+      artworks,
+      total,
+      currentPage: Number(page),
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 });
 
 // FOR HOME PAGE TRENDING
@@ -388,43 +424,83 @@ app.delete("/api/artworks/:id", async (req, res) => {
 //Comment
 
 app.post("/comments", async (req, res) => {
-    try {
-        const comment = {
-            artId: new ObjectId(req.body.artId),
-            userName: req.body.userName,
-            userEmail: req.body.userEmail,
-            userImage: req.body.userImage,
-            text: req.body.text,
-            createdAt: new Date(),
-        };
+  try {
+    const {
+      artId,
+      userName,
+      userEmail,
+      userImage,
+      text,
+    } = req.body;
 
-        const result = await Comment().insertOne(comment);
-
-        res.status(201).send(result);
-    } catch (error) {
-        res.status(500).send({
-            message: error.message,
-        });
+    if (!text?.trim()) {
+      return res.status(400).send({
+        success: false,
+        message: "Comment cannot be empty",
+      });
     }
+
+    // Purchase Check
+    const purchase = await Purchases().findOne({
+      artworkId: artId,
+      buyerEmail: userEmail,
+      status: "completed",
+    });
+
+    if (!purchase) {
+      return res.status(403).send({
+        success: false,
+        message:
+          "You must purchase this artwork before commenting.",
+      });
+    }
+
+    const comment = {
+      artId,
+      userName,
+      userEmail,
+      userImage,
+      text,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await Comment().insertOne(comment);
+
+    res.status(201).send({
+      success: true,
+      insertedId: result.insertedId,
+      message: "Comment added successfully",
+    });
+
+  } catch (error) {
+    console.error("Comment Error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
 });
 
 app.get("/comments/:artId", async (req, res) => {
-    try {
-        const result = await Comment()
-            .find({
-                artId: new ObjectId(req.params.artId),
-            })
-            .sort({
-                createdAt: -1,
-            })
-            .toArray();
+  try {
+    const result = await Comment()
+      .find({
+        artId: req.params.artId,
+      })
+      .sort({
+        createdAt: -1,
+      })
+      .toArray();
 
-        res.send(result);
-    } catch (error) {
-        res.status(500).send({
-            message: error.message,
-        });
-    }
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
 });
 
 app.put("/comments/:id", async (req, res) => {
@@ -469,28 +545,120 @@ app.delete("/comments/:id", async (req, res) => {
 // CREATE
 app.post("/api/purchase", async (req, res) => {
     try {
+        const {
+            artworkId,
+            title,
+            image,
+            price,
+            artistName,
+            artistEmail,
+            buyerName,
+            buyerEmail,
+            buyerImage,
+        } = req.body;
+
+        // Validate required fields
+        if (!artworkId || !buyerEmail) {
+            return res.status(400).json({
+                success: false,
+                message: "Artwork ID and Buyer Email are required",
+            });
+        }
+
+        // Find user
+        const user = await Users().findOne({
+            email: buyerEmail,
+        });
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found",
+            });
+        }
+
+        // Prevent duplicate purchase
+        const existingPurchase = await Purchases().findOne({
+            artworkId,
+            buyerEmail,
+        });
+
+        if (existingPurchase) {
+            return res.status(400).json({
+                success: false,
+                message: "You already purchased this artwork.",
+            });
+        }
+
+        // Purchase limit check
+        const maxPurchases =
+            typeof user.maxPurchases === "number"
+                ? user.maxPurchases
+                : 3;
+
+        const purchasedCount =
+            typeof user.purchasedCount === "number"
+                ? user.purchasedCount
+                : 0;
+
+        if (
+            maxPurchases !== -1 &&
+            purchasedCount >= maxPurchases
+        ) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Purchase limit reached. Please upgrade your subscription.",
+            });
+        }
+
         const purchase = {
-            artworkId: req.body.artworkId,
-            title: req.body.title,
-            image: req.body.image,
-            price: Number(req.body.price),
-            artistName: req.body.artistName,
-            artistEmail: req.body.artistEmail,
-            buyerName: req.body.buyerName,
-            buyerEmail: req.body.buyerEmail,
-            buyerImage: req.body.buyerImage,
+            artworkId,
+            title,
+            image,
+            price: Number(price),
+            artistName,
+            artistEmail,
+            buyerName,
+            buyerEmail,
+            buyerImage,
             status: "completed",
             createdAt: new Date(),
         };
+
+        // Save purchase
         const result = await Purchases().insertOne(purchase);
-        res.status(201).json({
-            success: true,
-            insertedId: result.insertedId,
-            purchase,
+
+        // Increment purchase count
+        await Users().updateOne(
+            { email: buyerEmail },
+            {
+                $inc: {
+                    purchasedCount: 1,
+                },
+            }
+        );
+
+        // Save transaction history
+        await Transactions().insertOne({
+            type: "purchase",
+            artworkId,
+            title,
+            buyerEmail,
+            artistEmail,
+            amount: Number(price),
+            createdAt: new Date(),
         });
 
+        return res.status(201).json({
+            success: true,
+            message: "Purchase successful",
+            insertedId: result.insertedId,
+        });
     } catch (error) {
-        res.status(500).json({
+        console.error("Purchase Error:", error);
+
+        return res.status(500).json({
             success: false,
             message: error.message,
         });
@@ -499,152 +667,254 @@ app.post("/api/purchase", async (req, res) => {
 
 // GET ALL PURCHASES
 app.get("/api/purchase", async (req, res) => {
-  try {
-    const { email } = req.query;
+    try {
+        const { email } = req.query;
 
-    const query = {};
+        const query = {};
 
-    if (email) {
-      query.buyerEmail = email;
+        if (email) {
+            query.buyerEmail = email;
+        }
+
+        const result = await Purchases()
+            .find(query)
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        res.json(result);
+
+    } catch (error) {
+        res.status(500).json({
+            message: error.message,
+        });
     }
-
-    const result = await Purchases()
-      .find(query)
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.json(result);
-
-  } catch (error) {
-    res.status(500).json({
-      message: error.message,
-    });
-  }
 });
 
 //GET ARTIST SELS
 app.get("/api/sales", async (req, res) => {
-  try {
-    const artistEmail = req.query.artistEmail;
+    try {
+        const artistEmail = req.query.artistEmail;
 
-    if (!artistEmail) {
-      return res.status(400).json({
-        success: false,
-        message: "artistEmail is required",
-      });
+        if (!artistEmail) {
+            return res.status(400).json({
+                success: false,
+                message: "artistEmail is required",
+            });
+        }
+
+        const sales = await Purchases()
+            .find({ artistEmail })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        res.status(200).json(sales);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
-
-    const sales = await Purchases()
-      .find({ artistEmail })
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.status(200).json(sales);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
 });
 
 //---------------------- Admin page -----------------------------
 app.get("/api/admin/analytics", async (req, res) => {
-  try {
-    const totalUsers = await Users().countDocuments({
-      role: "user",
-    });
+    try {
+        const totalUsers = await Users().countDocuments({
+            role: "user",
+        });
 
-    const totalArtists = await Users().countDocuments({
-      role: "artist",
-    });
+        const totalArtists = await Users().countDocuments({
+            role: "artist",
+        });
 
-    const sales = await Purchases().find().toArray();
+        const sales = await Purchases().find().toArray();
 
-    const totalRevenue = sales.reduce(
-      (sum, item) => sum + Number(item.price || 0),
-      0
-    );
+        const totalRevenue = sales.reduce(
+            (sum, item) => sum + Number(item.price || 0),
+            0
+        );
 
-    const totalArtworksSold = sales.length;
+        const totalArtworksSold = sales.length;
 
-    res.send({
-      totalUsers,
-      totalArtists,
-      totalRevenue,
-      totalArtworksSold,
-    });
-  } catch (err) {
-    res.status(500).send({
-      message: err.message,
-    });
-  }
+        res.send({
+            totalUsers,
+            totalArtists,
+            totalRevenue,
+            totalArtworksSold,
+        });
+    } catch (err) {
+        res.status(500).send({
+            message: err.message,
+        });
+    }
+});
+
+app.get("/api/admin/category-stats", async (req, res) => {
+    try {
+        const data = await Artworks()
+            .aggregate([
+                {
+                    $group: {
+                        _id: "$category",
+                        count: { $sum: 1 },
+                    },
+                },
+                {
+
+                    $project: {
+                        _id: 0,
+                        categoryName: "$_id",
+                        count: 1,
+                    },
+                },
+            ])
+            .toArray();
+
+        res.send(data);
+    } catch (err) {
+        res.status(500).send({
+            message: err.message,
+        });
+    }
 });
 
 app.get("/api/admin/sales-chart", async (req, res) => {
-  try {
-    const data = await Purchases()
-      .aggregate([
-        {
-          $group: {
-            _id: {
-              month: {
-                $month: "$createdAt",
-              },
-            },
-            revenue: {
-              $sum: "$price",
-            },
-          },
-        },
-        {
-          $sort: {
-            "_id.month": 1,
-          },
-        },
-      ])
-      .toArray();
+    try {
+        const data = await Purchases()
+            .aggregate([
+                {
+                    $group: {
+                        _id: {
+                            month: {
+                                $month: "$createdAt",
+                            },
+                        },
+                        revenue: {
+                            $sum: "$price",
+                        },
+                    },
+                },
+                {
+                    $sort: {
+                        "_id.month": 1,
+                    },
+                },
+            ])
+            .toArray();
 
-    res.send(data);
-  } catch (err) {
-    res.status(500).send({
-      message: err.message,
-    });
-  }
+        res.send(data);
+    } catch (err) {
+        res.status(500).send({
+            message: err.message,
+        });
+    }
 });
 
 app.get("/api/admin/users", async (req, res) => {
-  const users = await Users()
-    .find()
-    .sort({ createdAt: -1 })
-    .toArray();
+    const users = await Users()
+        .find()
+        .sort({ createdAt: -1 })
+        .toArray();
 
-  res.send(users);
+    res.send(users);
 });
 
 app.get("/api/admin/transactions", async (req, res) => {
-  const purchases = await Purchases()
-    .find()
-    .sort({ createdAt: -1 })
-    .toArray();
+    try {
+        const transactions = await Transactions()
+            .find()
+            .sort({ createdAt: -1 })
+            .toArray();
 
-  const transactions = purchases.map((item) => ({
-    id: item._id,
-    type: "purchase",
-    email: item.buyerEmail,
-    artistEmail: item.artistEmail,
-    amount: item.price,
-    date: item.createdAt,
-  }));
+        res.send(transactions);
+    } catch (error) {
+        res.status(500).send({
+            message: error.message,
+        });
+    }
+});
 
-  res.send(transactions);
+app.patch("/api/admin/users/:id/role", async (req, res) => {
+    const { id } = req.params;
+    const { role } = req.body;
+
+    const result = await Users().updateOne(
+        {
+            _id: new ObjectId(id),
+        },
+        {
+            $set: {
+                role,
+            },
+        }
+    );
+
+    res.send(result);
+});
+
+app.get("/api/admin/artworks", async (req, res) => {
+    const artworks = await Artworks()
+        .find()
+        .sort({ createdAt: -1 })
+        .toArray();
+
+    res.send(artworks);
+});
+
+app.delete("/api/admin/artworks/:id", async (req, res) => {
+    const result = await Artworks().deleteOne({
+        _id: new ObjectId(req.params.id),
+    });
+
+    res.send(result);
 });
 
 
 //SUBSCRIPTION
-app.get("/api/users/subscription", async (req, res) => {
-    res.send('Wellcome to ARTHUB server');
-})
+app.get("/api/admin/transactions", async (req, res) => {
+    try {
+        const purchases = await Purchases()
+            .find()
+            .toArray();
+
+        const subscriptions = await Transactions()
+            .find({ type: "subscription" })
+            .toArray();
+
+        const formattedPurchases = purchases.map((item) => ({
+            _id: item._id,
+            type: "purchase",
+            email: item.buyerEmail,
+            artistEmail: item.artistEmail,
+            amount: Number(item.price || 0),
+            plan: null,
+            date: item.createdAt,
+        }));
+
+        const formattedSubscriptions = subscriptions.map((item) => ({
+            _id: item._id,
+            type: "subscription",
+            email: item.userEmail,
+            artistEmail: null,
+            amount: Number(item.amount || 0),
+            plan: item.tier,
+            date: item.createdAt,
+        }));
+
+        const allTransactions = [
+            ...formattedPurchases,
+            ...formattedSubscriptions,
+        ].sort(
+            (a, b) => new Date(b.date) - new Date(a.date)
+        );
+
+        res.send(allTransactions);
+    } catch (error) {
+        res.status(500).send({
+            message: error.message,
+        });
+    }
+});
 
 app.patch("/api/users/subscription", async (req, res) => {
     try {
@@ -658,9 +928,17 @@ app.patch("/api/users/subscription", async (req, res) => {
         }
 
         let maxPurchases = 3;
+        let amount = 0;
 
-        if (tier === "pro") maxPurchases = 9;
-        if (tier === "premium") maxPurchases = -1;
+        if (tier === "pro") {
+            maxPurchases = 9;
+            amount = 9.99;
+        }
+
+        if (tier === "premium") {
+            maxPurchases = -1;
+            amount = 19.99;
+        }
 
         const result = await Users().findOneAndUpdate(
             { email },
@@ -674,25 +952,30 @@ app.patch("/api/users/subscription", async (req, res) => {
             },
             {
                 returnDocument: "after",
-                upsert: false,
             }
         );
 
-        if (!result || !result.value) {
+        if (!result) {
             return res.status(404).json({
                 success: false,
                 message: "User not found",
             });
         }
 
-        return res.json({
+        // Save transaction
+        await Transactions().insertOne({
+            type: "subscription",
+            userEmail: email,
+            tier,
+            amount,
+            createdAt: new Date(),
+        });
+
+        res.json({
             success: true,
             message: `Subscription upgraded to ${tier}`,
-            user: result.value,
         });
     } catch (error) {
-        console.log(error);
-
         res.status(500).json({
             success: false,
             message: error.message,
@@ -700,21 +983,23 @@ app.patch("/api/users/subscription", async (req, res) => {
     }
 });
 
+
 app.patch("/api/admin/users/:id/role", async (req, res) => {
-  const { id } = req.params;
-  const { role } = req.body;
+    const { id } = req.params;
+    const { role } = req.body;
 
-  const result = await Users().updateOne(
-    {
-      _id: new ObjectId(id),
-    },
-    {
-      $set: {
-        role,
-      },
-    }
-  );
+    const result = await Users().updateOne(
+        {
+            _id: new ObjectId(id),
+        },
+        {
+            $set: {
+                role,
+            },
+        }
+    );
 
-  res.send(result);
+    res.send(result);
 });
+
 
