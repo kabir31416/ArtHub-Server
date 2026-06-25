@@ -9,18 +9,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+import Stripe from "stripe";
+
+const stripe = new Stripe(
+    process.env.STRIPE_SECRET_KEY
+);
+
+
 
 // SERVER 
 const PORT = process.env.PORT || 5000;
+
 app.get('/', (req, res) => {
     res.send('Wellcome to ARTHUB server');
 });
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
 
 
-// DB CONECTION
+// DB CONNECTION
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri);
 
@@ -34,6 +39,22 @@ async function getDB() {
     }
     return db;
 }
+
+
+async function startServer() {
+    try {
+        await getDB();
+
+        app.listen(PORT, () => {
+            console.log(`Server running on port ${PORT}`);
+        });
+
+    } catch (error) {
+        console.error("Failed to start server:", error);
+    }
+}
+
+startServer();
 
 
 const Users = () => db.collection("user");
@@ -90,98 +111,106 @@ app.patch("/api/user/update", async (req, res) => {
     }
 });
 
+app.get("/api/user/:email", async (req, res) => {
+    const user = await Users().findOne({
+        email: req.params.email,
+    });
+
+    res.json(user);
+});
+
 
 // ART WORK API
 // GET ALL ARTWORKS + SEARCH + FILTER + SORT + ARTIST EMAIL
 app.get("/api/artworks", async (req, res) => {
-  try {
-    const {
-      email,
-      category,
-      search,
-      sort,
-      minPrice,
-      maxPrice,
-      page = 1,
-      limit = 8,
-    } = req.query;
+    try {
+        const {
+            email,
+            category,
+            search,
+            sort,
+            minPrice,
+            maxPrice,
+            page = 1,
+            limit = 8,
+        } = req.query;
 
-    let query = {};
+        let query = {};
 
-    // Artist Email
-    if (email) {
-      query.artistEmail = email;
+        // Artist Email
+        if (email) {
+            query.artistEmail = email;
+        }
+
+        // Category
+        if (category) {
+            query.category = category;
+        }
+
+        // Search Title OR Artist Name
+        if (search) {
+            query.$or = [
+                {
+                    title: {
+                        $regex: search,
+                        $options: "i",
+                    },
+                },
+                {
+                    artistName: {
+                        $regex: search,
+                        $options: "i",
+                    },
+                },
+            ];
+        }
+
+        // Price Range
+        if (minPrice || maxPrice) {
+            query.price = {};
+
+            if (minPrice) {
+                query.price.$gte = Number(minPrice);
+            }
+
+            if (maxPrice) {
+                query.price.$lte = Number(maxPrice);
+            }
+        }
+
+        let cursor = Artworks().find(query);
+
+
+        if (sort === "low") {
+            cursor = cursor.sort({ price: 1 });
+        }
+
+        if (sort === "high") {
+            cursor = cursor.sort({ price: -1 });
+        }
+
+        if (sort === "newest") {
+            cursor = cursor.sort({ createdAt: -1 });
+        }
+
+        const total = await Artworks().countDocuments(query);
+
+        const artworks = await cursor
+            .skip((page - 1) * Number(limit))
+            .limit(Number(limit))
+            .toArray();
+
+        res.json({
+            artworks,
+            total,
+            currentPage: Number(page),
+            totalPages: Math.ceil(total / limit),
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: error.message,
+        });
     }
-
-    // Category
-    if (category) {
-      query.category = category;
-    }
-
-    // Search Title OR Artist Name
-    if (search) {
-      query.$or = [
-        {
-          title: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-        {
-          artistName: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-      ];
-    }
-
-    // Price Range
-    if (minPrice || maxPrice) {
-      query.price = {};
-
-      if (minPrice) {
-        query.price.$gte = Number(minPrice);
-      }
-
-      if (maxPrice) {
-        query.price.$lte = Number(maxPrice);
-      }
-    }
-
-    let cursor = Artworks().find(query);
-
-   
-    if (sort === "low") {
-      cursor = cursor.sort({ price: 1 });
-    }
-
-    if (sort === "high") {
-      cursor = cursor.sort({ price: -1 });
-    }
-
-    if (sort === "newest") {
-      cursor = cursor.sort({ createdAt: -1 });
-    }
-
-    const total = await Artworks().countDocuments(query);
-
-    const artworks = await cursor
-      .skip((page - 1) * Number(limit))
-      .limit(Number(limit))
-      .toArray();
-
-    res.json({
-      artworks,
-      total,
-      currentPage: Number(page),
-      totalPages: Math.ceil(total / limit),
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: error.message,
-    });
-  }
 });
 
 // FOR HOME PAGE TRENDING
@@ -326,83 +355,83 @@ app.delete("/api/artworks/:id", async (req, res) => {
 //Comment
 
 app.post("/comments", async (req, res) => {
-  try {
-    const {
-      artId,
-      userName,
-      userEmail,
-      userImage,
-      text,
-    } = req.body;
+    try {
+        const {
+            artId,
+            userName,
+            userEmail,
+            userImage,
+            text,
+        } = req.body;
 
-    if (!text?.trim()) {
-      return res.status(400).send({
-        success: false,
-        message: "Comment cannot be empty",
-      });
+        if (!text?.trim()) {
+            return res.status(400).send({
+                success: false,
+                message: "Comment cannot be empty",
+            });
+        }
+
+        // Purchase Check
+        const purchase = await Purchases().findOne({
+            artworkId: artId,
+            buyerEmail: userEmail,
+            status: "completed",
+        });
+
+        if (!purchase) {
+            return res.status(403).send({
+                success: false,
+                message:
+                    "You must purchase this artwork before commenting.",
+            });
+        }
+
+        const comment = {
+            artId,
+            userName,
+            userEmail,
+            userImage,
+            text,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        };
+
+        const result = await Comment().insertOne(comment);
+
+        res.status(201).send({
+            success: true,
+            insertedId: result.insertedId,
+            message: "Comment added successfully",
+        });
+
+    } catch (error) {
+        console.error("Comment Error:", error);
+
+        res.status(500).send({
+            success: false,
+            message: error.message,
+        });
     }
-
-    // Purchase Check
-    const purchase = await Purchases().findOne({
-      artworkId: artId,
-      buyerEmail: userEmail,
-      status: "completed",
-    });
-
-    if (!purchase) {
-      return res.status(403).send({
-        success: false,
-        message:
-          "You must purchase this artwork before commenting.",
-      });
-    }
-
-    const comment = {
-      artId,
-      userName,
-      userEmail,
-      userImage,
-      text,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const result = await Comment().insertOne(comment);
-
-    res.status(201).send({
-      success: true,
-      insertedId: result.insertedId,
-      message: "Comment added successfully",
-    });
-
-  } catch (error) {
-    console.error("Comment Error:", error);
-
-    res.status(500).send({
-      success: false,
-      message: error.message,
-    });
-  }
 });
 
 app.get("/comments/:artId", async (req, res) => {
-  try {
-    const result = await Comment()
-      .find({
-        artId: req.params.artId,
-      })
-      .sort({
-        createdAt: -1,
-      })
-      .toArray();
+    try {
+        const result = await Comment()
+            .find({
+                artId: req.params.artId,
+            })
+            .sort({
+                createdAt: -1,
+            })
+            .toArray();
 
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({
-      success: false,
-      message: error.message,
-    });
-  }
+        res.send(result);
+    } catch (error) {
+        res.status(500).send({
+            success: false,
+            message: error.message,
+        });
+    }
 });
 
 app.put("/comments/:id", async (req, res) => {
@@ -447,6 +476,20 @@ app.delete("/comments/:id", async (req, res) => {
 // CREATE
 app.post("/api/purchase", async (req, res) => {
     try {
+        const { sessionId } = req.body;
+
+        const stripeSession =
+            await stripe.checkout.sessions.retrieve(
+                sessionId
+            );
+
+        if (stripeSession.payment_status !== "paid") {
+            return res.status(400).json({
+                success: false,
+                message: "Payment not completed",
+            });
+        }
+
         const {
             artworkId,
             title,
@@ -457,7 +500,7 @@ app.post("/api/purchase", async (req, res) => {
             buyerName,
             buyerEmail,
             buyerImage,
-        } = req.body;
+        } = stripeSession.metadata;
 
         // Validate required fields
         if (!artworkId || !buyerEmail) {
@@ -771,6 +814,24 @@ app.delete("/api/admin/artworks/:id", async (req, res) => {
     res.send(result);
 });
 
+app.patch("/api/admin/users/:id/role", async (req, res) => {
+    const { id } = req.params;
+    const { role } = req.body;
+
+    const result = await Users().updateOne(
+        {
+            _id: new ObjectId(id),
+        },
+        {
+            $set: {
+                role,
+            },
+        }
+    );
+
+    res.send(result);
+});
+
 
 //SUBSCRIPTION
 app.get("/api/admin/transactions", async (req, res) => {
@@ -886,22 +947,258 @@ app.patch("/api/users/subscription", async (req, res) => {
 });
 
 
-app.patch("/api/admin/users/:id/role", async (req, res) => {
-    const { id } = req.params;
-    const { role } = req.body;
+app.post("/api/create-checkout-session", async (req, res) => {
+    try {
+        const {
+            artworkId,
+            title,
+            image,
+            price,
+            artistName,
+            artistEmail,
+            buyerName,
+            buyerEmail,
+            buyerImage,
+        } = req.body;
 
-    const result = await Users().updateOne(
-        {
-            _id: new ObjectId(id),
-        },
-        {
-            $set: {
-                role,
+        const session = await stripe.checkout.sessions.create({
+            mode: "payment",
+
+            payment_method_types: ["card"],
+
+            line_items: [
+                {
+                    price_data: {
+                        currency: "usd",
+                        product_data: {
+                            name: title,
+                            images: [image],
+                        },
+                        unit_amount: Math.round(price * 100),
+                    },
+                    quantity: 1,
+                },
+            ],
+
+            metadata: {
+                artworkId,
+                title,
+                image,
+                price,
+                artistName,
+                artistEmail,
+                buyerName,
+                buyerEmail,
+                buyerImage,
             },
-        }
-    );
 
-    res.send(result);
+            success_url:
+                `${process.env.BASE_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+
+            cancel_url:
+                `${process.env.BASE_URL}/artwork/${artworkId}`,
+        });
+
+        res.send({
+            success: true,
+            url: session.url,
+        });
+
+    } catch (error) {
+        console.error("Stripe Checkout Error:", error);
+
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+});
+
+app.post("/api/create-subscription-session", async (req, res) => {
+    try {
+        const { email, tier } = req.body;
+
+        const PRICE_IDS = {
+            pro: process.env.STRIPE_PRO_PRICE_ID,
+            premium: process.env.STRIPE_PREMIUM_PRICE_ID,
+        };
+
+        const priceId = PRICE_IDS[tier];
+
+        if (!priceId) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid subscription tier",
+            });
+        }
+
+        const session = await stripe.checkout.sessions.create({
+            mode: "subscription",
+
+            customer_email: email,
+
+            line_items: [
+                {
+                    price: priceId,
+                    quantity: 1,
+                },
+            ],
+
+            metadata: {
+                email,
+                tier,
+            },
+
+            success_url:
+                `${process.env.BASE_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+
+            cancel_url:
+                `${process.env.BASE_URL}/dashboard/user`,
+        });
+
+        res.json({
+            success: true,
+            url: session.url,
+        });
+
+    } catch (error) {
+        console.error("Subscription Error:", error);
+
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+});
+
+app.post("/api/subscription-success", async (req, res) => {
+
+    try {
+        const { sessionId } = req.body;
+
+        const stripeSession =
+            await stripe.checkout.sessions.retrieve(
+                sessionId
+            );
+
+        console.log("mode =", stripeSession.mode);
+        console.log("payment_status =", stripeSession.payment_status);
+        console.log("metadata =", stripeSession.metadata);
+
+        if (stripeSession.payment_status !== "paid") {
+            return res.status(400).json({
+                success: false,
+                message: "Payment not completed",
+            });
+        }
+
+        const { email, tier } =
+            stripeSession.metadata;
+
+        let maxPurchases = 3;
+        let amount = 0;
+
+        if (tier === "pro") {
+            maxPurchases = 9;
+            amount = 9.99;
+        }
+
+        if (tier === "premium") {
+            maxPurchases = -1;
+            amount = 19.99;
+        }
+
+        await Users().updateOne(
+            { email },
+            {
+                $set: {
+                    subscriptionTier: tier,
+                    maxPurchases,
+                    subscriptionStatus: "active",
+                    subscriptionUpdatedAt: new Date(),
+                },
+            }
+        );
+
+        await Transactions().insertOne({
+            type: "subscription",
+            userEmail: email,
+            tier,
+            amount,
+            stripeSessionId: sessionId,
+            createdAt: new Date(),
+        });
+
+        res.json({
+            success: true,
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+});
+
+
+
+app.post("/api/verify-payment", async (req, res) => {
+    try {
+        const { sessionId } = req.body;
+
+        const stripeSession =
+            await stripe.checkout.sessions.retrieve(sessionId);
+
+        if (stripeSession.payment_status !== "paid") {
+            return res.status(400).send({
+                success: false,
+                message: "Payment not completed",
+            });
+        }
+
+        const exists = await Purchases().findOne({
+            stripeSessionId: sessionId,
+        });
+
+        if (exists) {
+            return res.send({
+                success: true,
+                message: "Already processed",
+            });
+        }
+
+        await Purchases().insertOne({
+            artworkId: stripeSession.metadata.artworkId,
+            title: stripeSession.metadata.title,
+            image: stripeSession.metadata.image,
+
+            artistName: stripeSession.metadata.artistName,
+            artistEmail: stripeSession.metadata.artistEmail,
+
+            buyerName: stripeSession.metadata.buyerName,
+            buyerEmail: stripeSession.metadata.buyerEmail,
+            buyerImage: stripeSession.metadata.buyerImage,
+
+            stripeSessionId: sessionId,
+            amount: stripeSession.amount_total / 100,
+
+            paymentStatus: "paid",
+            createdAt: new Date(),
+        });
+
+        res.send({
+            success: true,
+        });
+
+    } catch (error) {
+        console.log(error);
+
+        res.status(500).send({
+            success: false,
+            message: error.message,
+        });
+    }
 });
 
 
